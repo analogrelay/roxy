@@ -102,11 +102,25 @@ impl FrameBufferWriter {
                 let new_ypos =
                     self.y_pos + font_constants::CHAR_RASTER_HEIGHT.val() + BORDER_PADDING;
                 if new_ypos >= self.height() {
-                    self.clear();
+                    self.scroll(1);
                 }
                 self.write_rendered_char(get_char_raster(c));
             }
         }
+    }
+
+    fn scroll(&mut self, lines: usize) {
+        let start_y_pos = lines * (font_constants::CHAR_RASTER_HEIGHT.val() + LINE_SPACING) + BORDER_PADDING;
+        let end_y_pos = self.height() - BORDER_PADDING - start_y_pos;
+        for y in BORDER_PADDING..end_y_pos {
+            self.copy_line(y + start_y_pos, y);
+        }
+
+        let end_y_offset = end_y_pos * self.info.stride * self.info.bytes_per_pixel;
+        self.framebuffer[end_y_offset..].fill(0);
+
+        self.y_pos = self.height() - BORDER_PADDING - (lines * (font_constants::CHAR_RASTER_HEIGHT.val() + LINE_SPACING));
+        self.x_pos = BORDER_PADDING;
     }
 
     /// Prints a rendered char into the framebuffer.
@@ -138,6 +152,17 @@ impl FrameBufferWriter {
         self.framebuffer[byte_offset..(byte_offset + bytes_per_pixel)]
             .copy_from_slice(&color[..bytes_per_pixel]);
         let _ = unsafe { ptr::read_volatile(&self.framebuffer[byte_offset]) };
+    }
+
+    fn copy_line(&mut self, source_y: usize, dest_y: usize) {
+        let bytes_per_pixel = self.info.bytes_per_pixel;
+        let source_pixel_offset = source_y * self.info.stride;
+        let source_byte_offset = source_pixel_offset * bytes_per_pixel;
+        let dest_pixel_offset = dest_y * self.info.stride;
+        let dest_byte_offset = dest_pixel_offset * bytes_per_pixel;
+        let length = bytes_per_pixel * self.width();
+
+        self.framebuffer.copy_within(source_byte_offset..(source_byte_offset + length), dest_byte_offset);
     }
 }
 

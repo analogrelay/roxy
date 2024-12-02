@@ -1,9 +1,10 @@
 use super::{framebuffer::FrameBufferWriter, serial::SerialPort};
-use bootloader_api::info::FrameBufferInfo;
+use bootloader_api::info::{FrameBuffer, FrameBufferInfo};
 use conquer_once::spin::OnceCell;
-use x86_64::instructions::interrupts;
 use core::fmt::Write;
+use log::LevelFilter;
 use spinning_top::Spinlock;
+use x86_64::instructions::interrupts;
 
 /// The global logger instance used for the `log` crate.
 pub static LOGGER: OnceCell<LockedLogger> = OnceCell::uninit();
@@ -16,10 +17,7 @@ pub struct LockedLogger {
 
 impl LockedLogger {
     /// Create a new instance that logs to the given framebuffer.
-    pub fn new(
-        framebuffer: &'static mut [u8],
-        info: FrameBufferInfo,
-    ) -> Self {
+    pub fn new(framebuffer: &'static mut [u8], info: FrameBufferInfo) -> Self {
         let framebuffer = Spinlock::new(FrameBufferWriter::new(framebuffer, info));
         let serial = Spinlock::new(unsafe { SerialPort::init() });
 
@@ -51,4 +49,16 @@ impl log::Log for LockedLogger {
     }
 
     fn flush(&self) {}
+}
+
+pub fn init(fb: FrameBuffer) {
+    let info = fb.info();
+    let logger = LOGGER.get_or_init(move || LockedLogger::new(fb.into_buffer(), info));
+
+    log::set_logger(logger).expect("logger already set");
+    log::set_max_level(if cfg!(debug_assertions) {
+        LevelFilter::Debug
+    } else {
+        LevelFilter::Info
+    });
 }
