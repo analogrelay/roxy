@@ -1,4 +1,3 @@
-use conquer_once::spin::OnceCell;
 use x86_64::{
     instructions::tables::load_tss,
     registers::segmentation::{Segment, CS, SS},

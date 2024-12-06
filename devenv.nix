@@ -4,6 +4,7 @@
   packages = [ 
     pkgs.git
     pkgs.qemu
+    pkgs.rustfilt
   ];
   languages.rust = {
     enable = true;

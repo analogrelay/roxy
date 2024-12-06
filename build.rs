@@ -5,6 +5,7 @@ use std::path::PathBuf;
 fn main() {
     // set by cargo, build scripts should use this directory for output files
     let out_dir = PathBuf::from(std::env::var_os("OUT_DIR").unwrap());
+
     // set by cargo's artifact dependency feature, see
     // https://doc.rust-lang.org/nightly/cargo/reference/unstable.html#artifact-dependencies
     let kernel = PathBuf::from(std::env::var_os("CARGO_BIN_FILE_ROXY_KERNEL_roxy_kernel").unwrap());
@@ -24,4 +25,16 @@ fn main() {
     // pass the disk image paths as env variables to the `main.rs`
     println!("cargo:rustc-env=UEFI_PATH={}", uefi_path.display());
     println!("cargo:rustc-env=BIOS_PATH={}", bios_path.display());
+
+    // This is clunky, but it's the best we've got.
+    // We pull the kernel out to an "artifacts" directory so we can 
+    let artifact_dir = {
+        let mut p = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set"));
+        p.push("target");
+        p
+    };
+    std::fs::create_dir_all(&artifact_dir).unwrap();
+    let kernel_path = artifact_dir.join("kernel.elf");
+    std::fs::copy(&kernel, &kernel_path).expect("failed to copy kernel image");
+
 }

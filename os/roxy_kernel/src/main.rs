@@ -11,10 +11,13 @@ mod gdt;
 mod idt;
 mod logger;
 mod serial;
+mod vmm;
 
 static CONFIG: bootloader_api::BootloaderConfig = {
     let mut cfg = bootloader_api::BootloaderConfig::new_default();
-    cfg.mappings.physical_memory = Some(Mapping::Dynamic);
+    cfg.mappings.physical_memory = Some(Mapping::FixedAddress(vmm::PHYSICAL_MAP_START.as_u64()));
+    cfg.mappings.kernel_stack = Mapping::FixedAddress(vmm::KERNEL_STACK_START.as_u64());
+    cfg.mappings.dynamic_range_start = Some(0xA000_0000_0000);
     cfg
 };
 
@@ -45,33 +48,34 @@ fn kernel_main(boot_info: &'static mut bootloader_api::BootInfo) -> ! {
 }
 
 fn dump_boot_info(boot_info: &mut bootloader_api::BootInfo) {
-    log::debug!("Kernel: 0x{:08x} - 0x{:08x} ({} bytes)", boot_info.kernel_addr, boot_info.kernel_addr + boot_info.kernel_len, boot_info.kernel_len);
-    log::debug!("  Image Offset: 0x{:08x}", boot_info.kernel_image_offset);
-    log::debug!("  Entrypoint: {:p}", kernel_main as *const u8);
+    log::debug!("Kernel: {:#08x} - {:#08x} ({} bytes)", boot_info.kernel_image_offset, boot_info.kernel_image_offset + boot_info.kernel_len, boot_info.kernel_len);
+    log::debug!("  Physical Addresses: {:#08x} - {:#08x}", boot_info.kernel_addr, boot_info.kernel_addr + boot_info.kernel_len);
+    log::debug!("  Current instruction: {:#08x}", x86_64::registers::read_rip());
+    log::debug!("  Stack value: {:p}", &boot_info);
     if let Optional::Some(o) = boot_info.physical_memory_offset {
-        log::debug!("Physical Memory Offset: 0x{:08x}", o);
+        log::debug!("Physical Memory Offset: {:#08x}", o);
     }
     if let Optional::Some(o) = boot_info.rsdp_addr {
         if let Optional::Some(phys_offset) = boot_info.physical_memory_offset {
-            log::debug!("RSDP Address: 0x{:08x} (Virtual Address: 0x{:08x})", o, o + phys_offset);
+            log::debug!("RSDP Address: {:#08x} (Virtual Address: {:#08x})", o, o + phys_offset);
         } else {
-            log::debug!("RSDP Address: 0x{:08x}", o);
+            log::debug!("RSDP Address: {:#08x}", o);
         }
     }
     if let Optional::Some(t) = boot_info.tls_template {
-        log::debug!("TLS template: 0x{:08x} ({} file size, {} mem size)", t.start_addr, t.file_size, t.mem_size);
+        log::debug!("TLS template: {:#08x} ({} file size, {} mem size)", t.start_addr, t.file_size, t.mem_size);
     }
     if let Optional::Some(o) = boot_info.ramdisk_addr {
-        log::debug!("Initial ramdisk: 0x{:08x} - 0x{:08x} ({} bytes)", o, o + boot_info.ramdisk_len, boot_info.ramdisk_len);
+        log::debug!("Initial ramdisk: {:#08x} - {:#08x} ({} bytes)", o, o + boot_info.ramdisk_len, boot_info.ramdisk_len);
     }
 
     log::debug!("Reserved Memory Regions:");
     for mapping in boot_info.memory_regions.iter().filter(|r| r.kind != MemoryRegionKind::Usable) {
         if let MemoryRegionKind::UnknownUefi(i) = mapping.kind {
             let uefi_type = uefi::mem::memory_map::MemoryType(i);
-            log::debug!("  UEFI({:?}): 0x{:08x} - 0x{:08x} ({} bytes)", uefi_type, mapping.start, mapping.end, mapping.end - mapping.start);
+            log::debug!("  UEFI({:?}): {:#08x} - {:#08x} ({} bytes)", uefi_type, mapping.start, mapping.end, mapping.end - mapping.start);
         } else {
-            log::debug!("  {:?}: 0x{:08x} - 0x{:08x} ({} bytes)", mapping.kind, mapping.start, mapping.end, mapping.end - mapping.start);
+            log::debug!("  {:?}: {:#08x} - {:#08x} ({} bytes)", mapping.kind, mapping.start, mapping.end, mapping.end - mapping.start);
         }
     }
 }
