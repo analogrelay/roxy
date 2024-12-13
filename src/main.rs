@@ -7,6 +7,9 @@ struct Args {
 
     #[clap(long)]
     bios: bool,
+
+    #[clap(long, short)]
+    memory: Option<String>,
 }
 
 fn main() {
@@ -31,6 +34,10 @@ fn main() {
             .arg("-S")
             .arg("-no-reboot")
             .arg("-no-shutdown");
+    }
+
+    if let Some(memory) = args.memory {
+        cmd.arg("-m").arg(memory);
     }
 
     let mut child = cmd.spawn().unwrap();

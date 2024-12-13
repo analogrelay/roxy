@@ -1,5 +1,4 @@
-use alloc::vec::Vec;
-use bootloader_api::info::{MemoryRegionKind, MemoryRegions};
+use bootloader_api::info::{MemoryRegion, MemoryRegionKind, MemoryRegions};
 use x86_64::{
     structures::paging::{FrameAllocator, PhysFrame, Size4KiB},
     PhysAddr,
@@ -13,6 +12,25 @@ use crate::vmm;
 pub struct BootInfoFrameAllocator {
     memory_map: &'static MemoryRegions,
     next: usize,
+}
+
+impl From<MemoryRegionKind> for vmm::MemoryRegionKind {
+    fn from(value: MemoryRegionKind) -> Self {
+        match value {
+            MemoryRegionKind::Usable => vmm::MemoryRegionKind::Usable,
+            MemoryRegionKind::Bootloader => {
+                vmm::MemoryRegionKind::Reserved(vmm::ReservedMemoryKind::ReservedByBootloader)
+            }
+            MemoryRegionKind::UnknownBios(value) => {
+                vmm::MemoryRegionKind::Reserved(vmm::ReservedMemoryKind::ReservedByBios(value))
+            }
+            MemoryRegionKind::UnknownUefi(value) => {
+                vmm::MemoryRegionKind::Reserved(vmm::ReservedMemoryKind::ReservedByUefi(value))
+            }
+            // Assume other non-usable memory is reserved
+            _ => vmm::MemoryRegionKind::Reserved(vmm::ReservedMemoryKind::Unknown),
+        }
+    }
 }
 
 impl BootInfoFrameAllocator {
@@ -35,43 +53,8 @@ impl BootInfoFrameAllocator {
         let end = self.next;
         self.next = 0;
         let usable_frames = self.usable_frames();
-        let mut used_frames = usable_frames.take(end).collect::<Vec<_>>();
-        used_frames.sort();
-
-        let mut map_builder = vmm::MemoryMap::builder();
-        let mut used_frame_iter = used_frames.into_iter();
-        let mut next_used_frame = used_frame_iter.next();
-
-        fn contains(region: &MemoryRegion, frame: PhysFrame) -> bool {
-            region.start.as_u64() <= frame.start_address().as_u64()
-                && region.end.as_u64() >= frame.start_address().as_u64()
-        }
-
-        for (i, region) in self.memory_map.iter().enumerate() {
-            let mut region_start = region.start.as_u64();
-            let mut region_end = region.end.as_u64();
-
-            // Check if the next used frame is part of this region
-            while let Some(used_frame) = next_used_frame
-                && contains(region, used_frame)
-            {
-                // Split the region into two parts, before and after the used frame
-                region_start = region.start.as_u64();
-                region_end = used_frame.start_address().as_u64() - 1;
-
-                // Is there anything left in the first part? It's possible the used frame was right at the start
-                if region_start < region_end {
-                    // Register this region
-                    map_builder.add_region(
-                        PhysAddr::new(region_start),
-                        PhysAddr::new(region_end),
-                        region.kind.into(),
-                    );
-                }
-            }
-        }
-
-        map_builder.build()
+        let used_frames = usable_frames.take(end);
+        build_memory_map(self.memory_map.iter(), used_frames)
     }
 
     /// Returns an iterator over the usable frames specified in the memory map.
@@ -92,7 +75,171 @@ unsafe impl FrameAllocator<Size4KiB> for BootInfoFrameAllocator {
     fn allocate_frame(&mut self) -> Option<PhysFrame> {
         let frame = self.usable_frames().nth(self.next);
         self.next += 1;
-        log::debug!("Allocated {} frames", self.next);
         frame
+    }
+}
+
+fn build_memory_map<'a>(
+    memory_map: impl Iterator<Item = &'a MemoryRegion>,
+    mut used_frames: impl Iterator<Item = PhysFrame>,
+) -> vmm::MemoryMap {
+    let mut map_builder = vmm::MemoryMap::builder();
+    let mut current_frame = used_frames.next();
+    for region in memory_map {
+        let mut candidate = vmm::MemoryRegion::new(
+            PhysAddr::new(region.start),
+            PhysAddr::new(region.end),
+            region.kind.into(),
+        );
+
+        while let Some(used_frame) = current_frame {
+            if used_frame.start_address() >= candidate.end {
+                break;
+            }
+
+            let region = vmm::MemoryRegion::new(
+                used_frame.start_address(),
+                used_frame.start_address() + used_frame.size(),
+                vmm::MemoryRegionKind::InUse(vmm::MemoryPurpose::KernelHeap),
+            );
+            match candidate.try_merge(region) {
+                (region, None, None) => {
+                    candidate = region;
+                }
+                (region, Some(remainder), None) => {
+                    map_builder.add_region(region);
+                    candidate = remainder;
+                }
+                (region, Some(next), Some(remainder)) => {
+                    map_builder.add_region(region);
+                    map_builder.add_region(next);
+                    candidate = remainder;
+                }
+                _ => unreachable!(),
+            }
+            current_frame = used_frames.next();
+        }
+
+        map_builder.add_region(candidate);
+    }
+
+    map_builder.build()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::vec::Vec;
+
+    use bootloader_api::info::{MemoryRegion, MemoryRegionKind};
+    use x86_64::{
+        structures::paging::{PhysFrame, Size4KiB},
+        PhysAddr,
+    };
+
+    use crate::vmm;
+
+    use super::build_memory_map;
+
+    #[test]
+    pub fn builds_accurate_memory_map() {
+        let regions = std::vec![
+            &MemoryRegion {
+                start: 0x0000_0000,
+                end: 0x0040_0000,
+                kind: MemoryRegionKind::Usable,
+            },
+            &MemoryRegion {
+                start: 0x0040_0000,
+                end: 0x1000_0000,
+                kind: MemoryRegionKind::Usable,
+            },
+            &MemoryRegion {
+                start: 0x1000_0000,
+                end: 0x2000_0000,
+                kind: MemoryRegionKind::Bootloader,
+            },
+            &MemoryRegion {
+                start: 0x2000_0000,
+                end: 0x2000_1000,
+                kind: MemoryRegionKind::Usable,
+            },
+            &MemoryRegion {
+                start: 0x2000_1000,
+                end: 0x4000_0000,
+                kind: MemoryRegionKind::Usable,
+            },
+            &MemoryRegion {
+                start: 0x4000_0000,
+                end: 0x5000_0000,
+                kind: MemoryRegionKind::Usable,
+            },
+        ];
+
+        // Splatter some used frames in there
+        let used_frames: Vec<PhysFrame<Size4KiB>> = std::vec![
+            // Intentionally put these out of order.
+            PhysFrame::containing_address(PhysAddr::new(0x0000_2000)),
+            PhysFrame::containing_address(PhysAddr::new(0x0FFF_F000)), // On the trailing edge of the first region
+            // Three contiguous frames
+            PhysFrame::containing_address(PhysAddr::new(0x2000_0000)),
+            PhysFrame::containing_address(PhysAddr::new(0x2000_1000)),
+            PhysFrame::containing_address(PhysAddr::new(0x2000_2000)),
+            PhysFrame::containing_address(PhysAddr::new(0x3000_3000)),
+        ];
+
+        let map = build_memory_map(regions.into_iter(), used_frames.into_iter());
+
+        assert_eq!(
+            &[
+                vmm::MemoryRegion {
+                    start: PhysAddr::new(0x0000_0000),
+                    end: PhysAddr::new(0x0000_2000),
+                    kind: vmm::MemoryRegionKind::Usable,
+                },
+                vmm::MemoryRegion {
+                    start: PhysAddr::new(0x0000_2000),
+                    end: PhysAddr::new(0x0000_3000),
+                    kind: vmm::MemoryRegionKind::InUse(vmm::MemoryPurpose::KernelHeap)
+                },
+                vmm::MemoryRegion {
+                    start: PhysAddr::new(0x0000_3000),
+                    end: PhysAddr::new(0x0FFF_F000),
+                    kind: vmm::MemoryRegionKind::Usable,
+                },
+                vmm::MemoryRegion {
+                    start: PhysAddr::new(0x0FFF_F000),
+                    end: PhysAddr::new(0x1000_0000),
+                    kind: vmm::MemoryRegionKind::InUse(vmm::MemoryPurpose::KernelHeap),
+                },
+                vmm::MemoryRegion {
+                    start: PhysAddr::new(0x1000_0000),
+                    end: PhysAddr::new(0x2000_0000),
+                    kind: vmm::MemoryRegionKind::Reserved(
+                        vmm::ReservedMemoryKind::ReservedByBootloader
+                    ),
+                },
+                vmm::MemoryRegion {
+                    start: PhysAddr::new(0x2000_0000),
+                    end: PhysAddr::new(0x2000_3000),
+                    kind: vmm::MemoryRegionKind::InUse(vmm::MemoryPurpose::KernelHeap),
+                },
+                vmm::MemoryRegion {
+                    start: PhysAddr::new(0x2000_3000),
+                    end: PhysAddr::new(0x3000_3000),
+                    kind: vmm::MemoryRegionKind::Usable,
+                },
+                vmm::MemoryRegion {
+                    start: PhysAddr::new(0x3000_3000),
+                    end: PhysAddr::new(0x3000_4000),
+                    kind: vmm::MemoryRegionKind::InUse(vmm::MemoryPurpose::KernelHeap),
+                },
+                vmm::MemoryRegion {
+                    start: PhysAddr::new(0x3000_4000),
+                    end: PhysAddr::new(0x5000_0000),
+                    kind: vmm::MemoryRegionKind::Usable,
+                },
+            ],
+            map.regions()
+        )
     }
 }

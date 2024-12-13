@@ -1,13 +1,7 @@
-use core::panic::PanicInfo;
-
-use alloc::{boxed::Box, rc::Rc, vec, vec::Vec};
-use bootloader_api::{
-    config::Mapping,
-    info::{MemoryRegionKind, Optional},
-};
+use bootloader_api::{config::Mapping, info::Optional};
 use x86_64::VirtAddr;
 
-use crate::vmm::{self, VirtualMemoryManager};
+use crate::vmm;
 
 mod framebuffer;
 mod gdt;
@@ -16,17 +10,7 @@ mod logger;
 mod memory;
 mod serial;
 
-static CONFIG: bootloader_api::BootloaderConfig = {
-    let mut cfg = bootloader_api::BootloaderConfig::new_default();
-    cfg.mappings.physical_memory = Some(Mapping::FixedAddress(vmm::PHYSICAL_MAP_START.as_u64()));
-    cfg.mappings.kernel_stack = Mapping::FixedAddress(vmm::KERNEL_STACK_START.as_u64());
-    cfg.mappings.dynamic_range_start = Some(0xB000_0000_0000);
-    cfg
-};
-
-bootloader_api::entry_point!(kernel_main, config = &CONFIG);
-
-fn kernel_main(boot_info: &'static mut bootloader_api::BootInfo) -> ! {
+pub fn kernel_main(boot_info: &'static mut bootloader_api::BootInfo) -> ! {
     let mut fb = Optional::None;
     core::mem::swap(&mut fb, &mut boot_info.framebuffer);
     let fb = fb
@@ -50,7 +34,7 @@ fn kernel_main(boot_info: &'static mut bootloader_api::BootInfo) -> ! {
     gdt::init();
     idt::init();
 
-    unsafe {
+    let memory_map = unsafe {
         let phys_offset = VirtAddr::new(
             boot_info
                 .physical_memory_offset
@@ -58,28 +42,26 @@ fn kernel_main(boot_info: &'static mut bootloader_api::BootInfo) -> ! {
                 .expect("bootloader to have given us a physical memory mapping"),
         );
 
-        memory::init(phys_offset, &boot_info.memory_regions);
+        memory::init(phys_offset, &boot_info.memory_regions)
     };
 
-    // Now that we have a heap, build up the memory manager.
-    let vmm = VirtualMemoryManager::new(&boot_info.memory_regions);
+    log::info!(
+        "Memory map initialized. {} known bytes, {} reserved bytes",
+        memory_map.total_memory(),
+        memory_map.reserved_memory()
+    );
 
-    todo!();
-}
-
-#[panic_handler]
-fn panic(info: &PanicInfo) -> ! {
-    if let Some(loc) = info.location() {
-        log::error!(
-            "PANIC ({}:{}:{}): {:#?}",
-            loc.file(),
-            loc.line(),
-            loc.column(),
-            info.message()
-        );
-    } else {
-        log::error!("PANIC (<unknown>): {:#?}", info.message());
+    if log::log_enabled!(log::Level::Debug) {
+        for region in memory_map.regions() {
+            log::debug!(
+                "Region: {:#08X} - {:#08X} ({} bytes - {:?})",
+                region.start,
+                region.end,
+                region.size(),
+                region.kind,
+            );
+        }
     }
 
-    loop {}
+    todo!();
 }

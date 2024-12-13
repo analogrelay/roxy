@@ -4,6 +4,7 @@
   packages = [ 
     pkgs.git
     pkgs.qemu
+    pkgs.lld
     pkgs.rustfilt
   ];
   languages.rust = {

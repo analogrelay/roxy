@@ -35,9 +35,8 @@ pub unsafe fn init(
 
     initialize_heap(&mut page_table, &mut frame_allocator);
 
-    // Build our memory map, in our own heap (so we can start yeeting bootloader data)
-    let mut map_builder = vmm::MemoryMap::builder();
-    for region in memory_map.iter() {}
+    // Consume our current frame allocator and use it to build a memory map.
+    frame_allocator.into_memory_map()
 }
 
 const INITIAL_HEAP_SIZE: usize = 100 * 1024;

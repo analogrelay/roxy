@@ -10,6 +10,4 @@ pub use memory_map::*;
 
 pub struct VirtualMemoryManager {}
 
-impl VirtualMemoryManager {
-    pub fn new(memory_map: Vec<MemoryRegion>) -> VirtualMemoryManager {}
-}
+impl VirtualMemoryManager {}

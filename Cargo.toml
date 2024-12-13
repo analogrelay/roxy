@@ -21,6 +21,8 @@ ovmf-prebuilt = "0.1.0-alpha.1"
 [profile.release.package.roxy_kernel]
 rustflags = [
     "-C",
+    "linker=ld.lld",
+    "-C",
     "link-args=--image-base 0xFFFF800000000000",
     "-C",
     "link-args=--gc-sections",
@@ -30,8 +32,13 @@ rustflags = [
     "relocation-model=static",
 ]
 
+[profile.test.package.roxy_kernel]
+rustflags = []
+
 [profile.dev.package.roxy_kernel]
 rustflags = [
+    "-C",
+    "linker=ld.lld",
     "-C",
     "link-args=--image-base 0xFFFF800000000000",
     "-C",
