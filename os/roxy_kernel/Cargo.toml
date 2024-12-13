@@ -5,12 +5,13 @@ edition = "2021"
 
 [dependencies]
 bootloader_api = "0.11.9"
-noto-sans-mono-bitmap = "0.3.0"
+noto-sans-mono-bitmap = { version = "0.3.0", features = ["size_20"] }
 spinning_top = "0.3.0"
 conquer-once = { version = "0.4.0", default-features = false }
 log = "0.4.20"
 lazy_static = { version = "1.5.0", features = ["spin_no_std"] }
 uefi = "0.33.0"
+linked_list_allocator = "0.10.5"
 
 [target.x86_64-unknown-none.dependencies]
 x86_64 = "0.15.1"

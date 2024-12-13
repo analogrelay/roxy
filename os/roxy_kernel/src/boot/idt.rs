@@ -1,7 +1,7 @@
 use conquer_once::spin::OnceCell;
 use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame, PageFaultErrorCode};
 
-use crate::gdt;
+use crate::boot::gdt;
 
 static IDT: OnceCell<InterruptDescriptorTable> = OnceCell::uninit();
 
