@@ -5,8 +5,9 @@ use x86_64::{
         gdt::{Descriptor, GlobalDescriptorTable, SegmentSelector},
         tss::TaskStateSegment,
     },
-    VirtAddr,
 };
+
+use crate::arch::VirtualAddress;
 
 pub const DOUBLE_FAULT_IST_INDEX: u16 = 0;
 
@@ -23,7 +24,7 @@ lazy_static::lazy_static! {
             const STACK_SIZE: usize = 4096 * 5;
             static mut STACK: [u8; STACK_SIZE] = [0; STACK_SIZE];
 
-            let stack_start = VirtAddr::from_ptr(&raw const STACK);
+            let stack_start = VirtualAddress::from_ptr(&raw const STACK);
             let stack_end = stack_start + STACK_SIZE as u64;
             stack_end
         };

@@ -35,15 +35,28 @@ impl log::Log for LockedLogger {
 
     fn log(&self, record: &log::Record) {
         if let Some(framebuffer) = &self.framebuffer {
-            interrupts::without_interrupts(|| {
-                let mut framebuffer = framebuffer.lock();
-                writeln!(framebuffer, "{:5}: {}", record.level(), record.args()).unwrap();
-            })
+            if record.level() < log::Level::Debug {
+                interrupts::without_interrupts(|| {
+                    let mut framebuffer = framebuffer.lock();
+                    writeln!(framebuffer, "{:5}: {}", record.level(), record.args()).unwrap();
+                })
+            }
         }
         if let Some(serial) = &self.serial {
             interrupts::without_interrupts(|| {
                 let mut serial = serial.lock();
-                writeln!(serial, "{:5}: {}", record.level(), record.args()).unwrap();
+                if let Some(module_path) = record.module_path() {
+                    writeln!(
+                        serial,
+                        "{:5} [{}]: {}",
+                        record.level(),
+                        module_path,
+                        record.args()
+                    )
+                    .unwrap();
+                } else {
+                    writeln!(serial, "{:5}: {}", record.level(), record.args()).unwrap();
+                }
             });
         }
     }
@@ -57,8 +70,8 @@ pub fn init(fb: FrameBuffer) {
 
     log::set_logger(logger).expect("logger already set");
     log::set_max_level(if cfg!(debug_assertions) {
-        LevelFilter::Debug
+        LevelFilter::Trace
     } else {
-        LevelFilter::Info
+        LevelFilter::Debug
     });
 }

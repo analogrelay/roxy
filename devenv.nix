@@ -15,6 +15,7 @@
     ];
     targets = [
       "x86_64-unknown-none"
+      "x86_64-unknown-linux-gnu"
     ];
   };
 }

@@ -8,6 +8,12 @@ struct Args {
     #[clap(long)]
     bios: bool,
 
+    #[clap(long)]
+    no_serial: bool,
+
+    #[clap(long)]
+    procs: Option<usize>,
+
     #[clap(long, short)]
     memory: Option<String>,
 }
@@ -27,6 +33,14 @@ fn main() {
         cmd.arg("-bios").arg(ovmf_prebuilt::ovmf_pure_efi());
         cmd.arg("-drive")
             .arg(format!("format=raw,file={uefi_path}"));
+    }
+
+    if !args.no_serial {
+        cmd.arg("-serial").arg("stdio");
+    }
+
+    if let Some(procs) = args.procs {
+        cmd.arg("-smp").arg(format!("{}", procs));
     }
 
     if args.debug {

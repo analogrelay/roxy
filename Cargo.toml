@@ -1,8 +1,9 @@
 cargo-features = ["profile-rustflags"]
 
 [workspace]
-members = [
-    "os/roxy_kernel"
+members = [ "os/roxy_arch", 
+    "os/roxy_kernel", 
+    "os/roxy_memory"
 ]
 
 [package]

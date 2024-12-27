@@ -1,5 +1,7 @@
 mod boot_info_frame_allocator;
 
+use core::mem;
+
 use boot_info_frame_allocator::BootInfoFrameAllocator;
 use bootloader_api::info::MemoryRegions;
 use x86_64::{
@@ -7,15 +9,25 @@ use x86_64::{
     structures::paging::{
         FrameAllocator, Mapper, OffsetPageTable, Page, PageTable, PageTableFlags, Size4KiB,
     },
-    VirtAddr,
 };
 
-use crate::{heap::ALLOCATOR, vmm};
+pub type VirtualAddress = x86_64::VirtAddr;
+pub type PhysicalAddress = x86_64::PhysAddr;
+
+pub const KERNEL_IMAGE_START: VirtualAddress = VirtualAddress::new_truncate(0x8000_0000_0000);
+pub const KERNEL_STACK_START: VirtualAddress = VirtualAddress::new_truncate(0x9000_0000_0000);
+pub const KERNEL_HEAP_START: VirtualAddress = VirtualAddress::new_truncate(0xA000_0000_0000);
+pub const PHYSICAL_MAP_START: VirtualAddress = VirtualAddress::new_truncate(0xC000_0000_0000);
+
+use crate::{
+    heap::ALLOCATOR,
+    vmm::{self, VirtualMemoryManager},
+};
 
 pub unsafe fn init(
-    physical_offset: VirtAddr,
+    physical_offset: VirtualAddress,
     memory_map: &'static MemoryRegions,
-) -> vmm::MemoryMap {
+) -> &'static vmm::VirtualMemoryManager {
     let mut page_table = get_page_table(physical_offset);
 
     // Clear the mappings below the kernel start, we don't need them.
@@ -36,7 +48,9 @@ pub unsafe fn init(
     initialize_heap(&mut page_table, &mut frame_allocator);
 
     // Consume our current frame allocator and use it to build a memory map.
-    frame_allocator.into_memory_map()
+    let memory_map = frame_allocator.into_memory_map();
+
+    VirtualMemoryManager::init(memory_map, page_table)
 }
 
 const INITIAL_HEAP_SIZE: usize = 100 * 1024;
@@ -45,8 +59,8 @@ fn initialize_heap(
     frame_allocator: &mut impl FrameAllocator<Size4KiB>,
 ) {
     // Start with a 100KiB heap.
-    let heap_end = vmm::KERNEL_HEAP_START + INITIAL_HEAP_SIZE as u64;
-    let start_page = Page::<Size4KiB>::containing_address(vmm::KERNEL_HEAP_START);
+    let heap_end = KERNEL_HEAP_START + INITIAL_HEAP_SIZE as u64;
+    let start_page = Page::<Size4KiB>::containing_address(KERNEL_HEAP_START);
     let end_page = Page::<Size4KiB>::containing_address(heap_end);
     let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE;
     for page in Page::range_inclusive(start_page, end_page) {
@@ -65,7 +79,7 @@ fn initialize_heap(
     unsafe {
         // SAFETY: We just allocated these pages.
         let mut alloc = ALLOCATOR.lock();
-        alloc.init(vmm::KERNEL_HEAP_START.as_mut_ptr(), INITIAL_HEAP_SIZE);
+        alloc.init(KERNEL_HEAP_START.as_mut_ptr(), INITIAL_HEAP_SIZE);
         log::debug!(
             "Initialized Kernel Heap from {:p} - {:p}",
             alloc.bottom(),
@@ -74,7 +88,7 @@ fn initialize_heap(
     }
 }
 
-pub unsafe fn get_page_table(physical_offset: VirtAddr) -> OffsetPageTable<'static> {
+pub unsafe fn get_page_table(physical_offset: VirtualAddress) -> OffsetPageTable<'static> {
     let (l4_table_frame, _) = Cr3::read();
     let phys = l4_table_frame.start_address();
     let virt = physical_offset + phys.as_u64();
