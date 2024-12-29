@@ -5,7 +5,7 @@ use std::{
 
 pub use machine::EmulatedMachine;
 
-use crate::{PhysicalAddress, VirtualAddress, arch::Architecture};
+use crate::{Error, PhysicalAddress, VirtualAddress, arch::Architecture};
 
 mod machine;
 
@@ -34,6 +34,22 @@ impl<A: Architecture> Emulated<A> {
     pub fn machine_mut(&mut self) -> impl DerefMut<Target = EmulatedMachine<A>> {
         self.machine.write().unwrap()
     }
+
+    /// Clears the poison flag on the machine lock.
+    ///
+    /// Used in tests to reset the poison state when a panic occurs.
+    pub fn clear_poison(&self) {
+        self.machine.clear_poison();
+    }
+
+    pub unsafe fn try_read<T>(&self, address: VirtualAddress) -> Result<T, Error> {
+        // Need write access when reading in order to update the TLB
+        self.machine.write()?.read(address)
+    }
+
+    pub unsafe fn try_write<T>(&self, address: VirtualAddress, value: T) -> Result<(), Error> {
+        self.machine.write()?.write(address, value)
+    }
 }
 
 impl<A: Architecture> Architecture for Emulated<A> {
@@ -56,6 +72,10 @@ impl<A: Architecture> Architecture for Emulated<A> {
 
     fn is_valid(&self, address: VirtualAddress) -> bool {
         self.arch.is_valid(address)
+    }
+
+    fn validate_flags(flags: usize) -> bool {
+        A::validate_flags(flags)
     }
 
     unsafe fn write_bytes(&self, address: crate::VirtualAddress, value: u8, count: usize) {
@@ -91,10 +111,10 @@ impl<A: Architecture> Architecture for Emulated<A> {
 
     unsafe fn read<T>(&self, address: VirtualAddress) -> T {
         // Need write access when reading in order to update the TLB
-        self.machine.write().unwrap().read(address).unwrap()
+        unsafe { self.try_read(address).unwrap() }
     }
 
     unsafe fn write<T>(&self, address: VirtualAddress, value: T) {
-        self.machine.write().unwrap().write(address, value).unwrap();
+        unsafe { self.try_write(address, value).unwrap() };
     }
 }

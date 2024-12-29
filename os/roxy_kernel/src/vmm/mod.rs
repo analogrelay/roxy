@@ -1,19 +1,15 @@
 use core::ops::Range;
 
 use conquer_once::spin::OnceCell;
-use thiserror::Error;
 use x86_64::{
-    structures::paging::{Mapper, OffsetPageTable, Page, PageTableFlags, PhysFrame, Translate},
+    structures::paging::{OffsetPageTable, Translate},
     PhysAddr, VirtAddr,
 };
 
-mod address_space;
 mod error;
-mod frame_allocator;
 mod memory_map;
-pub use address_space::*;
+
 pub use error::*;
-pub use frame_allocator::*;
 pub use memory_map::*;
 
 use crate::arch::{PhysicalAddress, VirtualAddress, PHYSICAL_MAP_START};
@@ -21,8 +17,8 @@ use crate::arch::{PhysicalAddress, VirtualAddress, PHYSICAL_MAP_START};
 static INSTANCE: OnceCell<VirtualMemoryManager> = OnceCell::uninit();
 
 pub struct VirtualMemoryManager {
+    memory_map: MemoryMap,
     kernel_page_table: OffsetPageTable<'static>,
-    frame_allocator: FrameAllocator,
 }
 
 impl VirtualMemoryManager {
@@ -31,7 +27,7 @@ impl VirtualMemoryManager {
         page_table: OffsetPageTable<'static>,
     ) -> &'static VirtualMemoryManager {
         INSTANCE.get_or_init(|| Self {
-            frame_allocator: FrameAllocator::new(memory_map),
+            memory_map,
             kernel_page_table: page_table,
         })
     }
@@ -42,12 +38,8 @@ impl VirtualMemoryManager {
             .expect("VirtualMemoryManager not initialized")
     }
 
-    pub fn create_address_space(&self) -> AddressSpace {
-        AddressSpace::new(&self.kernel_page_table)
-    }
-
     pub fn memory_map(&self) -> &MemoryMap {
-        &self.frame_allocator.memory_map
+        &self.memory_map
     }
 
     /// Maps a physical region of memory to a virtual region

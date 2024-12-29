@@ -1,6 +1,6 @@
 use core::ptr;
 
-use crate::{Error, PhysicalAddress, VirtualAddress, paging::TableKind};
+use crate::{PhysicalAddress, VirtualAddress, paging::TableKind};
 
 cfg_if::cfg_if! {
     if #[cfg(target_pointer_width = "64")] {
@@ -9,7 +9,10 @@ cfg_if::cfg_if! {
     }
 }
 
+#[cfg(feature = "emulated")]
 mod emulated;
+
+#[cfg(feature = "emulated")]
 pub use emulated::{Emulated, EmulatedMachine};
 
 pub trait Architecture: Send + Sync {
@@ -117,6 +120,11 @@ pub trait Architecture: Send + Sync {
     ///
     /// Note: A valid address may still refer to an unmapped page!
     fn is_valid(&self, address: VirtualAddress) -> bool;
+
+    /// Validates the flags for a page table entry.
+    ///
+    /// Returns `true` if the flags are valid, `false` otherwise.
+    fn validate_flags(flags: usize) -> bool;
 
     /// Gets the address of the current root page table of the specified kind.
     ///

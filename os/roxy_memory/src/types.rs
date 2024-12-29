@@ -1,6 +1,6 @@
 use core::{
     fmt::Debug,
-    ops::{Add, Sub},
+    ops::{Add, AddAssign, Rem, Sub, SubAssign},
 };
 
 /// Indicates a "zone" of memory, which can be either [`MemoryZone::Kernel`], to represent
@@ -13,12 +13,12 @@ pub enum MemoryZone {
 
 /// Represents a region of usable memory.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct UsableMemoryRegion {
+pub struct MemoryRegion {
     pub base: PhysicalAddress,
     pub size: usize,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct PhysicalAddress(usize);
 
 impl PhysicalAddress {
@@ -33,6 +33,15 @@ impl PhysicalAddress {
     }
 }
 
+impl Rem<usize> for PhysicalAddress {
+    type Output = usize;
+
+    #[inline(always)]
+    fn rem(self, rhs: usize) -> Self::Output {
+        self.0 % rhs
+    }
+}
+
 impl Add<usize> for PhysicalAddress {
     type Output = Self;
 
@@ -42,12 +51,33 @@ impl Add<usize> for PhysicalAddress {
     }
 }
 
+impl AddAssign<usize> for PhysicalAddress {
+    fn add_assign(&mut self, rhs: usize) {
+        self.0 += rhs;
+    }
+}
+
 impl Sub<usize> for PhysicalAddress {
     type Output = Self;
 
     #[inline(always)]
     fn sub(self, rhs: usize) -> Self::Output {
         Self(self.0 + rhs)
+    }
+}
+
+impl Sub<PhysicalAddress> for PhysicalAddress {
+    type Output = usize;
+
+    #[inline(always)]
+    fn sub(self, rhs: PhysicalAddress) -> Self::Output {
+        self.0 - rhs.0
+    }
+}
+
+impl SubAssign<usize> for PhysicalAddress {
+    fn sub_assign(&mut self, rhs: usize) {
+        self.0 -= rhs;
     }
 }
 
@@ -82,6 +112,15 @@ impl VirtualAddress {
 
     pub fn as_mut_ptr<T>(&self) -> *mut T {
         self.0 as *mut T
+    }
+}
+
+impl Rem<usize> for VirtualAddress {
+    type Output = usize;
+
+    #[inline(always)]
+    fn rem(self, rhs: usize) -> Self::Output {
+        self.0 % rhs
     }
 }
 

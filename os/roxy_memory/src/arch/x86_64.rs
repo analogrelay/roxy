@@ -44,41 +44,75 @@ impl Architecture for X8664 {
         is_canonical(address.value())
     }
 
-    #[inline(always)]
-    fn page_table_address(
-        &self,
-        // x86_64 has only one page table kind
-        _table_kind: crate::paging::TableKind,
-    ) -> crate::PhysicalAddress {
-        unsafe {
-            // SAFETY: We're assigning to address within this block.
-            let address: usize;
-            asm!("mov {0}, cr3", out(reg) address);
-            PhysicalAddress::new(address)
-        }
-    }
+    cfg_if::cfg_if!(
+        if #[cfg(target_arch = "x86_64")] {
+            #[inline(always)]
+            fn page_table_address(
+                &self,
+                // x86_64 has only one page table kind
+                _table_kind: crate::paging::TableKind,
+            ) -> crate::PhysicalAddress {
+                unsafe {
+                    // SAFETY: We're assigning to address within this block.
+                    let address: usize;
+                    asm!("mov {0}, cr3", out(reg) address);
+                    PhysicalAddress::new(address)
+                }
+            }
 
-    #[inline(always)]
-    unsafe fn set_page_table_address(
-        &self,
-        // x86_64 has only one page table
-        _table_kind: crate::paging::TableKind,
-        address: PhysicalAddress,
-    ) {
-        unsafe {
-            // SAFETY: The caller is asserting that this is a valid physical address.
-            asm!("mov cr3, {0}", in(reg) address.value());
-        }
-    }
+            #[inline(always)]
+            unsafe fn set_page_table_address(
+                &self,
+                // x86_64 has only one page table
+                _table_kind: crate::paging::TableKind,
+                address: PhysicalAddress,
+            ) {
+                unsafe {
+                    // SAFETY: The caller is asserting that this is a valid physical address.
+                    asm!("mov cr3, {0}", in(reg) address.value());
+                }
+            }
 
-    fn invalidate_one(&self, addr: VirtualAddress) {
-        // SAFETY: Invalidating the TLB cache is "safe" from a memory safety perspective.
-        unsafe { asm!("invlpg [{0}]", in(reg) addr.value()) };
-    }
+            #[inline(always)]
+            fn invalidate_one(&self, addr: VirtualAddress) {
+                // SAFETY: Invalidating the TLB cache is "safe" from a memory safety perspective.
+                unsafe { asm!("invlpg [{0}]", in(reg) addr.value()) };
+            }
+        } else {
+            #[inline(always)]
+            fn page_table_address(
+                &self,
+                // x86_64 has only one page table kind
+                _table_kind: crate::paging::TableKind,
+            ) -> crate::PhysicalAddress {
+                panic!("attempting to get page table address on non-x86_64 architecture");
+            }
+
+            #[inline(always)]
+            unsafe fn set_page_table_address(
+                &self,
+                // x86_64 has only one page table
+                _table_kind: crate::paging::TableKind,
+                address: PhysicalAddress,
+            ) {
+                panic!("attempting to set page table address on non-x86_64 architecture");
+            }
+
+            #[inline(always)]
+            fn invalidate_one(&self, addr: VirtualAddress) {
+                panic!("attempting to invalidate TLB on non-x86_64 architecture");
+            }
+        }
+    );
 
     fn invalidate_all(&self, table_kind: TableKind) {
         // Resetting the page table address will invalidate the TLB
         unsafe { self.set_page_table_address(table_kind, self.page_table_address(table_kind)) };
+    }
+
+    fn validate_flags(_: usize) -> bool {
+        // TODO: Implement this
+        true
     }
 }
 

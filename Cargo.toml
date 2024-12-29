@@ -1,10 +1,13 @@
 cargo-features = ["profile-rustflags"]
 
 [workspace]
-members = [ "os/roxy_arch", 
-    "os/roxy_kernel", 
-    "os/roxy_memory"
-]
+members = ["os/roxy_kernel", "os/roxy_macros", "os/roxy_memory"]
+
+[workspace.dependencies]
+roxy_macros = { path = "os/roxy_macros" }
+roxy_memory = { path = "os/roxy_memory" }
+tracing = { version = "0.1.41", default-features = false, features = [ "attributes" ] }
+test-log = { version = "0.2.16", features = ["trace"] }
 
 [package]
 name = "roxy"
@@ -20,32 +23,10 @@ clap = { version = "4.5.8", features = ["derive"] }
 ovmf-prebuilt = "0.1.0-alpha.1"
 
 [profile.release.package.roxy_kernel]
-rustflags = [
-    "-C",
-    "linker=ld.lld",
-    "-C",
-    "link-args=--image-base 0xFFFF800000000000",
-    "-C",
-    "link-args=--gc-sections",
-    "-C",
-    "code-model=large",
-    "-C",
-    "relocation-model=static",
-]
+rustflags = ["-C", "linker=ld.lld", "-C", "link-args=--image-base 0xFFFF800000000000", "-C", "link-args=--gc-sections", "-C", "code-model=large", "-C", "relocation-model=static"]
 
 [profile.test.package.roxy_kernel]
 rustflags = []
 
 [profile.dev.package.roxy_kernel]
-rustflags = [
-    "-C",
-    "linker=ld.lld",
-    "-C",
-    "link-args=--image-base 0xFFFF800000000000",
-    "-C",
-    "link-args=--gc-sections",
-    "-C",
-    "code-model=large",
-    "-C",
-    "relocation-model=static",
-]
+rustflags = ["-C", "linker=ld.lld", "-C", "link-args=--image-base 0xFFFF800000000000", "-C", "link-args=--gc-sections", "-C", "code-model=large", "-C", "relocation-model=static"]

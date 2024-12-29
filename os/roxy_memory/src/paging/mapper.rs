@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use crate::{
     Architecture, Error, PhysicalAddress, VirtualAddress,
     allocator::FrameAllocator,
@@ -52,9 +50,13 @@ impl<'a, A: Architecture, F: FrameAllocator> PageMapper<'a, A, F> {
     }
 
     /// Creates a brand new page table hierarchy in an available frame.
-    pub unsafe fn create(table_kind: TableKind, mut allocator: F, arch: &'a A) -> Option<Self> {
+    pub unsafe fn create(
+        table_kind: TableKind,
+        mut allocator: F,
+        arch: &'a A,
+    ) -> Result<Self, Error> {
         let table_address = unsafe { allocator.allocate_frame(1)? };
-        Some(unsafe { Self::new(table_kind, table_address.start, allocator, arch) })
+        Ok(unsafe { Self::new(table_kind, table_address.start, allocator, arch) })
     }
 
     /// Loads the active page table hierarchy from architecture-defined registers.
@@ -98,6 +100,16 @@ impl<'a, A: Architecture, F: FrameAllocator> PageMapper<'a, A, F> {
         }
     }
 
+    /// Maps the provided virtual address to a new frame.
+    pub unsafe fn map(
+        &mut self,
+        virtual_address: VirtualAddress,
+        flags: PageFlags<A>,
+    ) -> Result<FlushPromise<A>, Error> {
+        let phys = unsafe { self.allocator.allocate_one()? };
+        unsafe { self.map_to(virtual_address, phys, flags) }
+    }
+
     /// Maps the provided range of virtual addresses to the provided range of physical addresses.
     pub unsafe fn map_to(
         &mut self,
@@ -105,6 +117,17 @@ impl<'a, A: Architecture, F: FrameAllocator> PageMapper<'a, A, F> {
         physical_address: PhysicalAddress,
         flags: PageFlags<A>,
     ) -> Result<FlushPromise<A>, Error> {
+        // Validate the addresses and flags
+        if virtual_address % A::PAGE_SIZE != 0 {
+            return Err(Error::NotPageAligned(virtual_address.value()));
+        }
+        if physical_address % A::PAGE_SIZE != 0 {
+            return Err(Error::NotPageAligned(physical_address.value()));
+        }
+        if !flags.validate() {
+            return Err(Error::InvalidPageFlags(flags.value()));
+        }
+
         // Walk down page tables, creating as we go, until we reach the level that should be mapped.
         let mut leaf_table = self.walk_to_leaf(virtual_address, PageFlags::new_for_table())?;
         assert_eq!(0, leaf_table.level());
@@ -113,6 +136,41 @@ impl<'a, A: Architecture, F: FrameAllocator> PageMapper<'a, A, F> {
         let index = A::index_at_level(virtual_address, 0);
         unsafe { leaf_table.set_entry(index, PageEntry::new(physical_address, flags))? };
         Ok(FlushPromise::new(virtual_address, self.arch))
+    }
+
+    pub unsafe fn remap_entry_with(
+        &mut self,
+        virtual_address: VirtualAddress,
+        remap: impl FnOnce(PageEntry<A>) -> PageEntry<A>,
+    ) -> Result<FlushPromise<A>, Error> {
+        let (mut table, index) = self
+            .find_leaf_entry(virtual_address)?
+            .ok_or(Error::PageNotMapped)?;
+        unsafe { table.set_entry(index, remap(table.entry(index)?)) }?;
+        Ok(FlushPromise::new(virtual_address, self.arch))
+    }
+
+    pub unsafe fn remap_with(
+        &mut self,
+        virtual_address: VirtualAddress,
+        remap: impl FnOnce(PageFlags<A>) -> PageFlags<A>,
+    ) -> Result<FlushPromise<A>, Error> {
+        unsafe {
+            self.remap_entry_with(virtual_address, |mut e| {
+                let flags = e.flags();
+                let new_flags = remap(flags);
+                e.set_flags(new_flags);
+                e
+            })
+        }
+    }
+
+    pub unsafe fn remap(
+        &mut self,
+        virtual_address: VirtualAddress,
+        new_flags: PageFlags<A>,
+    ) -> Result<FlushPromise<A>, Error> {
+        unsafe { self.remap_with(virtual_address, |_| new_flags) }
     }
 
     /// Walks down the page table hierarchy to the leaf table that should contain the provided virtual address.
@@ -129,8 +187,7 @@ impl<'a, A: Architecture, F: FrameAllocator> PageMapper<'a, A, F> {
                 Some(t) => t,
                 None => {
                     // Allocate a new table
-                    let frame = unsafe { self.allocator.allocate_one() };
-                    let frame = frame.ok_or(Error::OutOfPhysicalMemory)?;
+                    let frame = unsafe { self.allocator.allocate_one()? };
                     let new_table = unsafe {
                         PageTable::new(
                             A::base_at_level(virtual_address, level),
@@ -148,18 +205,68 @@ impl<'a, A: Architecture, F: FrameAllocator> PageMapper<'a, A, F> {
 
         Ok(table)
     }
+
+    fn find_leaf_entry(
+        &self,
+        virtual_address: VirtualAddress,
+    ) -> Result<Option<(PageTable<A>, usize)>, Error> {
+        let mut table = self.root_table();
+        for level in (1..A::PAGE_LEVELS).rev() {
+            let index = A::index_at_level(virtual_address, level);
+            table = match unsafe { table.next_table(index) }? {
+                Some(t) => t,
+                None => return Ok(None),
+            };
+        }
+
+        Ok(Some((table, A::index_at_level(virtual_address, 0))))
+    }
 }
 
 #[cfg(test)]
 mod test {
     use crate::{
-        Architecture, Emulated, EmulatedMachine, VirtualAddress, X8664,
+        Emulated, EmulatedMachine, Error, VirtualAddress, X8664,
         allocator::{BumpFrameAllocator, FrameAllocator},
-        paging::{PageFlags, PageMapper, TableKind},
+        paging::{PageEntry, PageFlags, PageMapper, TableKind},
     };
 
     #[test]
-    pub fn map_physical_address() {
+    pub fn map() {
+        const TEST_VADDR: VirtualAddress = VirtualAddress::new(0x60000);
+        const TEST_VALUE: u32 = 0x12345678;
+        let (machine, areas) = EmulatedMachine::<X8664>::new(64 * 1024 * 1024);
+        let arch = Emulated::new(X8664, machine);
+        let allocator = BumpFrameAllocator::new(&arch, &areas);
+
+        let mut mapper = unsafe {
+            PageMapper::new(
+                TableKind::Kernel,
+                arch.machine().page_table_address(TableKind::Kernel),
+                allocator,
+                &arch,
+            )
+        };
+
+        unsafe {
+            mapper
+                .map(TEST_VADDR, PageFlags::new().with_writable(true))
+                .unwrap()
+                .flush()
+        };
+
+        // Now, write to the mapped address
+        unsafe {
+            arch.try_write(TEST_VADDR, TEST_VALUE).unwrap();
+        }
+
+        // Try to read from the virtual address and see if the value is the same.
+        let read_value: u32 = unsafe { arch.try_read(TEST_VADDR).unwrap() };
+        assert_eq!(TEST_VALUE, read_value);
+    }
+
+    #[test]
+    pub fn map_to() {
         const TEST_VADDR: VirtualAddress = VirtualAddress::new(0x40000);
         const TEST_VALUE: u32 = 0x12345678;
         let (machine, areas) = EmulatedMachine::<X8664>::new(64 * 1024 * 1024);
@@ -187,7 +294,7 @@ mod test {
 
         // Now, write to the mapped address
         unsafe {
-            arch.write(TEST_VADDR, TEST_VALUE);
+            arch.try_write(TEST_VADDR, TEST_VALUE).unwrap();
         }
 
         // Try to read from the physical address and see if the value is the same.
@@ -195,7 +302,81 @@ mod test {
         assert_eq!(TEST_VALUE, read_value);
 
         // Try to read from the virtual address and see if the value is the same.
-        let read_value: u32 = unsafe { arch.read(TEST_VADDR) };
+        let read_value: u32 = unsafe { arch.try_read(TEST_VADDR).unwrap() };
         assert_eq!(TEST_VALUE, read_value);
+    }
+
+    #[test]
+    pub fn remap() {
+        const TEST_VADDR: VirtualAddress = VirtualAddress::new(0x40000);
+        const TEST_VALUE: u32 = 0x12345678;
+        let (machine, areas) = EmulatedMachine::<X8664>::new(64 * 1024 * 1024);
+        let arch = Emulated::new(X8664, machine);
+        let mut allocator = BumpFrameAllocator::new(&arch, &areas);
+
+        // Get a frame to map
+        let frame_1 = unsafe { allocator.allocate_one().unwrap() };
+        let frame_2 = unsafe { allocator.allocate_one().unwrap() };
+
+        let mut mapper = unsafe {
+            PageMapper::new(
+                TableKind::Kernel,
+                arch.machine().page_table_address(TableKind::Kernel),
+                allocator,
+                &arch,
+            )
+        };
+
+        unsafe {
+            mapper
+                .map_to(TEST_VADDR, frame_1, PageFlags::new().with_writable(true))
+                .unwrap()
+                .flush()
+        };
+
+        // Now, write to the mapped address
+        unsafe {
+            arch.try_write(TEST_VADDR, TEST_VALUE).unwrap();
+        }
+
+        let read_value: u32 = arch.machine().read_physical(frame_1).unwrap();
+        assert_eq!(TEST_VALUE, read_value);
+
+        // Now, remap the same address to be read-only and try to write to it.
+        unsafe {
+            mapper
+                .remap(TEST_VADDR, PageFlags::new().with_writable(false))
+                .unwrap()
+                .flush()
+        };
+        let r = unsafe { arch.try_write(TEST_VADDR, TEST_VALUE + 1) };
+        assert_eq!(Error::PageIsReadOnly, r.unwrap_err());
+
+        // The panic poisoned the lock, so we need to reset it.
+        arch.clear_poison();
+
+        // Try remapping as writable, in a new location
+        unsafe {
+            mapper
+                .remap_entry_with(TEST_VADDR, |e| {
+                    PageEntry::new(frame_2, e.flags().with_writable(true))
+                })
+                .unwrap()
+                .flush()
+        };
+
+        // Now, write to the new mapped address
+        unsafe {
+            arch.try_write(TEST_VADDR, TEST_VALUE + 2).unwrap();
+        }
+
+        // Read from the old physical address and see if the value is the same.
+        assert_eq!(TEST_VALUE, arch.machine().read_physical(frame_1).unwrap());
+
+        // And from the new physical address, which should have the new value.
+        assert_eq!(
+            TEST_VALUE + 2,
+            arch.machine().read_physical(frame_2).unwrap()
+        );
     }
 }

@@ -1,9 +1,4 @@
-use std::sync::Arc;
-
-use crate::{
-    Architecture, Error, PhysicalAddress, VirtualAddress,
-    paging::{PageEntry, PageEntryAddress},
-};
+use crate::{Architecture, Error, PhysicalAddress, VirtualAddress, paging::PageEntry};
 
 pub struct PageTable<'a, A> {
     base_address: VirtualAddress,
@@ -41,7 +36,7 @@ impl<'a, A: Architecture> PageTable<'a, A> {
 
     /// Gets the virtual address of the table.
     pub fn virtual_address(&self) -> VirtualAddress {
-        unsafe { self.arch.virtual_address_for(self.addr) }
+        self.arch.virtual_address_for(self.addr)
     }
 
     /// Gets the level of the table.

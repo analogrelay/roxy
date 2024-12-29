@@ -1,7 +1,7 @@
-use std::collections::BTreeMap;
+use std::{boxed::Box, collections::BTreeMap};
 
 use crate::{
-    Architecture, Error, PhysicalAddress, UsableMemoryRegion, VirtualAddress,
+    Architecture, Error, MemoryRegion, PhysicalAddress, VirtualAddress,
     paging::{PageEntry, PageFlags, TableKind},
 };
 
@@ -22,7 +22,7 @@ pub struct EmulatedMachine<A> {
 }
 
 impl<A: Architecture> EmulatedMachine<A> {
-    pub fn new(size: usize) -> (Self, Vec<UsableMemoryRegion>) {
+    pub fn new(size: usize) -> (Self, std::vec::Vec<MemoryRegion>) {
         let (memory, root_table, usable_regions) = MemoryBuilder::<A>::build(size);
 
         (
@@ -207,7 +207,7 @@ struct MemoryBuilder<A> {
 }
 
 impl<A: Architecture> MemoryBuilder<A> {
-    pub fn build(size: usize) -> (Box<[u8]>, PhysicalAddress, Vec<UsableMemoryRegion>) {
+    pub fn build(size: usize) -> (Box<[u8]>, PhysicalAddress, std::vec::Vec<MemoryRegion>) {
         assert!(
             size >= A::PAGE_SIZE,
             "memory size must be at least one page"
@@ -217,7 +217,7 @@ impl<A: Architecture> MemoryBuilder<A> {
             "memory size must be a multiple of the page size"
         );
 
-        let mut memory = vec![0xBEu8; size].into_boxed_slice();
+        let mut memory = std::vec![0xBEu8; size].into_boxed_slice();
 
         // Create the root page table.
         let root_table = PhysicalAddress::new(0);
@@ -236,7 +236,7 @@ impl<A: Architecture> MemoryBuilder<A> {
             s.map(virt, phys, PageFlags::new().with_writable(true));
         }
 
-        let areas = vec![UsableMemoryRegion {
+        let areas = std::vec![MemoryRegion {
             base: PhysicalAddress::new(s.frames_allocated * A::PAGE_SIZE),
             size: s.memory.len() - s.frames_allocated * A::PAGE_SIZE,
         }];
@@ -274,7 +274,7 @@ impl<A: Architecture> MemoryBuilder<A> {
         // Parent should now be the leaf table.
         let offset = A::index_at_level(virt, 0);
         let start = parent.value() + offset * A::PAGE_ENTRY_SIZE;
-        let entry = unsafe { PageEntry::<A>::new(phys, flags).value() };
+        let entry = PageEntry::<A>::new(phys, flags).value();
         unsafe {
             let ptr = self.memory[start..start + A::PAGE_ENTRY_SIZE].as_mut_ptr() as *mut usize;
             std::ptr::write(ptr, entry);
@@ -296,7 +296,7 @@ impl<A: Architecture> MemoryBuilder<A> {
 #[cfg(test)]
 mod test {
     mod x86_64 {
-        use crate::{Architecture, EmulatedMachine, PhysicalAddress, UsableMemoryRegion, X8664};
+        use crate::{Architecture, EmulatedMachine, MemoryRegion, PhysicalAddress, X8664};
 
         #[test]
         pub fn machine_initializes_physical_memory_table() {
@@ -309,7 +309,7 @@ mod test {
             let page = X8664::PHYSICAL_MEMORY_OFFSET + frame.value();
 
             let mut addr = machine.kernel_page_table_address;
-            for level in (0..X8664::PAGE_LEVELS - 1).rev() {
+            for level in (0..X8664::PAGE_LEVELS).rev() {
                 let offset = X8664::index_at_level(page, level);
                 let start = addr.value() + offset * X8664::PAGE_ENTRY_SIZE;
                 let entry = unsafe {
@@ -339,9 +339,9 @@ mod test {
             );
 
             assert_eq!(
-                vec![UsableMemoryRegion {
-                    base: PhysicalAddress::new(0x22000),
-                    size: 64 * 1024 * 1024 - 0x22000,
+                std::vec![MemoryRegion {
+                    base: PhysicalAddress::new(0x23000),
+                    size: 64 * 1024 * 1024 - 0x23000,
                 }],
                 areas
             );

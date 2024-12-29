@@ -160,6 +160,11 @@ impl<A: Architecture> PageFlags<A> {
         // that only support a no-global flag, we'll only return true if that flag is clear.
         self.value & (A::ENTRY_FLAG_GLOBAL | A::ENTRY_FLAG_NO_GLOBAL) == A::ENTRY_FLAG_GLOBAL
     }
+
+    #[inline(always)]
+    pub fn validate(&self) -> bool {
+        A::validate_flags(self.value)
+    }
 }
 
 impl<A: Architecture> core::fmt::Debug for PageFlags<A> {

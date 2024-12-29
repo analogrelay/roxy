@@ -15,10 +15,7 @@ extern crate alloc;
 pub mod arch;
 mod framebuffer;
 mod heap;
-mod kernel;
 mod logger;
 mod serial;
 mod utils;
 mod vmm;
-
-pub use kernel::Kernel;

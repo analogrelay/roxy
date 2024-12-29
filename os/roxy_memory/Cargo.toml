@@ -4,9 +4,15 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+bitflags = "2.6.0"
 cfg-if = "1.0.0"
 thiserror = { version = "2.0.7", default-features = false }
+spinning_top = "0.3.0"
+roxy_macros.workspace = true
+tracing.workspace = true
+test-log.workspace = true
 
 [features]
-default = ["std"]
+default = ["emulated"]
+emulated = ["std"]
 std = []

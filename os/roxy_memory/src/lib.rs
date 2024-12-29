@@ -1,10 +1,16 @@
-#![cfg_attr(not(feature = "std"), no_std)]
+#![no_std]
+
+#[cfg(any(test, feature = "std"))]
+extern crate std;
+
+extern crate alloc;
 
 mod allocator;
 mod arch;
 pub mod paging;
 mod types;
 
+pub use allocator::*;
 pub use arch::*;
 use thiserror::Error;
 pub use types::*;
@@ -21,8 +27,8 @@ pub enum Error {
         "attempted to map a region of virtual addresses to a region of physical addresses with a different size"
     )]
     RegionSizesNotEqual,
-    #[error("a provided address was not page-aligned")]
-    NotPageAligned,
+    #[error("the address {0:#0x} is not page-aligned")]
+    NotPageAligned(usize),
     #[error("out of physical memory")]
     OutOfPhysicalMemory,
     #[error("page is read-only, but write access was attempted")]
@@ -31,6 +37,10 @@ pub enum Error {
     PageNotMapped,
     #[error("physical address is outside of the usable memory region")]
     PhysicalAddressOutOfRange,
+    #[error("page flags are invalid: {0:#0x}")]
+    InvalidPageFlags(usize),
+    #[error("bump allocator cannot free memory")]
+    BumpAllocatorCannotFree,
 }
 
 #[cfg(feature = "std")]

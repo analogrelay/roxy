@@ -10,9 +10,8 @@ pub use memory::{
 };
 
 use bootloader_api::info::Optional;
-use x86_64::structures::paging::{Page, PageTableFlags, PhysFrame};
 
-use crate::{logger, vmm::VirtualMemoryManager, Kernel};
+use crate::logger;
 
 pub fn kernel_main(boot_info: &'static mut bootloader_api::BootInfo) -> ! {
     let mut fb = Optional::None;
@@ -32,6 +31,13 @@ pub fn kernel_main(boot_info: &'static mut bootloader_api::BootInfo) -> ! {
         boot_info.api_version.version_minor(),
         boot_info.api_version.version_patch()
     );
+    log::debug!(
+        "Kernel loaded from {:#X} to {:#X}, mapped around {:#X}, size {} bytes",
+        boot_info.kernel_addr,
+        boot_info.kernel_addr + boot_info.kernel_len,
+        kernel_main as *const () as usize,
+        boot_info.kernel_len,
+    );
 
     log::info!("Roxy is booting...");
 
@@ -49,6 +55,15 @@ pub fn kernel_main(boot_info: &'static mut bootloader_api::BootInfo) -> ! {
         memory::init(phys_offset, &boot_info.memory_regions)
     };
 
+    for region in vmm.memory_map().regions() {
+        log::debug!(
+            "Memory region: {:#X} - {:#X} ({:?})",
+            region.start,
+            region.end,
+            region.kind,
+        );
+    }
+
     log::info!(
         "Memory map initialized. {} known bytes, {} reserved bytes",
         vmm.memory_map().total_memory(),
@@ -57,26 +72,26 @@ pub fn kernel_main(boot_info: &'static mut bootloader_api::BootInfo) -> ! {
 
     pic::init();
 
-    run_usermode_test(&vmm);
+    // run_usermode_test(&vmm);
 
     loop {
         x86_64::instructions::hlt();
     }
 }
 
-fn run_usermode_test(vmm: &'static VirtualMemoryManager) {
-    // Create a page table for the new process
-    let mut address_space = vmm.create_address_space();
-    let func_addr = VirtualAddress::from_ptr(userspace::userspace_prog_1 as *const ());
-    let func_phys = vmm
-        .to_physical_address(func_addr)
-        .expect("the user space program should be mapped");
-    let func_frame = PhysFrame::containing_address(func_phys);
-    let func_offset = func_addr.as_u64() & 0xFFF;
+// fn run_usermode_test(vmm: &'static VirtualMemoryManager) {
+//     // Create a page table for the new process
+//     let mut address_space = vmm.create_address_space();
+//     let func_addr = VirtualAddress::from_ptr(userspace::userspace_prog_1 as *const ());
+//     let func_phys = vmm
+//         .to_physical_address(func_addr)
+//         .expect("the user space program should be mapped");
+//     let func_frame = PhysFrame::containing_address(func_phys);
+//     let func_offset = func_addr.as_u64() & 0xFFF;
 
-    let func_page_start = VirtualAddress::new(0x400000);
-    let func_virt = func_page_start + func_offset;
-    let func_page = Page::containing_address(func_page_start);
+//     let func_page_start = VirtualAddress::new(0x400000);
+//     let func_virt = func_page_start + func_offset;
+//     let func_page = Page::containing_address(func_page_start);
 
-    address_space.map_existing_frame(func_page, func_frame, PageTableFlags::USER_ACCESSIBLE);
-}
+//     address_space.map_existing_frame(func_page, func_frame, PageTableFlags::USER_ACCESSIBLE);
+// }
