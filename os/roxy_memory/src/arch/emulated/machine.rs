@@ -63,6 +63,41 @@ impl<A: Architecture> EmulatedMachine<A> {
         Ok(())
     }
 
+    /// Copies values from the "real" machine in to the emulated machine.
+    pub fn copy_in<T>(&mut self, values: &[T], address: VirtualAddress) -> Result<(), Error> {
+        let size = values.len() * std::mem::size_of::<T>();
+        if address.value() + size > self.memory.len() {
+            return Err(Error::OutOfPhysicalMemory);
+        }
+
+        let mem = self.get_memory_mut(address, values.len() * std::mem::size_of::<T>())?;
+        unsafe {
+            std::ptr::copy(values.as_ptr(), mem as *mut T, values.len());
+        }
+        Ok(())
+    }
+
+    pub fn copy(
+        &mut self,
+        src: VirtualAddress,
+        dest: VirtualAddress,
+        count: usize,
+    ) -> Result<(), Error> {
+        let src = self.translate(src)?.ok_or(Error::PageNotMapped)?;
+        let dest = self.translate(dest)?.ok_or(Error::PageNotMapped)?;
+        if !dest.flags().writable() {
+            return Err(Error::PageIsReadOnly);
+        }
+        let src_mem =
+            self.get_physical_memory(src.address().map_err(|_| Error::PageNotMapped)?, count)?;
+        let dest_mem =
+            self.get_physical_memory_mut(dest.address().map_err(|_| Error::PageNotMapped)?, count)?;
+        unsafe {
+            std::ptr::copy(src_mem, dest_mem, count);
+        }
+        Ok(())
+    }
+
     /// Reads a value directly from the physical memory of the emulated machine.
     pub fn read_physical<T>(&self, address: PhysicalAddress) -> Result<T, Error> {
         let mem = self.get_physical_memory(address, std::mem::size_of::<T>())?;
@@ -97,12 +132,16 @@ impl<A: Architecture> EmulatedMachine<A> {
         }
     }
 
-    fn get_memory(&mut self, address: VirtualAddress, size: usize) -> Result<*const u8, Error> {
+    pub fn get_memory(&mut self, address: VirtualAddress, size: usize) -> Result<*const u8, Error> {
         let addr = self.resolve_address(address, false)?;
         self.get_physical_memory(addr, size)
     }
 
-    fn get_memory_mut(&mut self, address: VirtualAddress, size: usize) -> Result<*mut u8, Error> {
+    pub fn get_memory_mut(
+        &mut self,
+        address: VirtualAddress,
+        size: usize,
+    ) -> Result<*mut u8, Error> {
         let addr = self.resolve_address(address, true)?;
         self.get_physical_memory_mut(addr, size)
     }
@@ -137,6 +176,20 @@ impl<A: Architecture> EmulatedMachine<A> {
         &mut self,
         address: VirtualAddress,
     ) -> Result<Option<PageEntry<Emulated<A>>>, Error> {
+        // This is a bit of a hack, but it'll probably work OK.
+        // If the address exactly matches an real address in the memory buffer, then we can just
+        // use the offset in to that.
+        let memory_start = self.memory.as_ptr() as usize;
+        let memory_end = memory_start + self.memory.len();
+        if address.value() >= memory_start && address.value() < memory_end {
+            let offset = address.value() - memory_start;
+            let phys = PhysicalAddress::new(offset);
+            return Ok(Some(PageEntry::new(
+                phys,
+                PageFlags::new().with_writable(true),
+            )));
+        }
+
         // Try the TLB first
         if let Some(entry) = self.tlb.get(&address).cloned() {
             Ok(Some(entry))

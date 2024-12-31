@@ -50,6 +50,15 @@ impl<A: Architecture> Emulated<A> {
     pub unsafe fn try_write<T>(&self, address: VirtualAddress, value: T) -> Result<(), Error> {
         self.machine.write()?.write(address, value)
     }
+
+    pub unsafe fn try_copy(
+        &self,
+        src: VirtualAddress,
+        dest: VirtualAddress,
+        count: usize,
+    ) -> Result<(), Error> {
+        self.machine.write()?.copy(src, dest, count)
+    }
 }
 
 impl<A: Architecture> Architecture for Emulated<A> {
@@ -116,5 +125,9 @@ impl<A: Architecture> Architecture for Emulated<A> {
 
     unsafe fn write<T>(&self, address: VirtualAddress, value: T) {
         unsafe { self.try_write(address, value).unwrap() };
+    }
+
+    unsafe fn copy(&self, src: VirtualAddress, dest: VirtualAddress, count: usize) {
+        unsafe { self.try_copy(src, dest, count).unwrap() };
     }
 }

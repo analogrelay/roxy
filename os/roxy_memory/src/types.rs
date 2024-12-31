@@ -18,6 +18,13 @@ pub struct MemoryRegion {
     pub size: usize,
 }
 
+impl MemoryRegion {
+    #[inline(always)]
+    pub fn end(&self) -> PhysicalAddress {
+        self.base + self.size
+    }
+}
+
 #[derive(Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct PhysicalAddress(usize);
 
@@ -30,6 +37,11 @@ impl PhysicalAddress {
     #[inline(always)]
     pub const fn value(&self) -> usize {
         self.0
+    }
+
+    #[inline(always)]
+    pub const fn align_up(&self, align: usize) -> Self {
+        Self(self.0.next_multiple_of(align))
     }
 }
 
@@ -62,7 +74,7 @@ impl Sub<usize> for PhysicalAddress {
 
     #[inline(always)]
     fn sub(self, rhs: usize) -> Self::Output {
-        Self(self.0 + rhs)
+        Self(self.0 - rhs)
     }
 }
 
@@ -112,6 +124,23 @@ impl VirtualAddress {
 
     pub fn as_mut_ptr<T>(&self) -> *mut T {
         self.0 as *mut T
+    }
+
+    #[inline(always)]
+    pub const fn align_up(&self, align: usize) -> Self {
+        Self(self.0.next_multiple_of(align))
+    }
+}
+
+impl<T> From<*const T> for VirtualAddress {
+    fn from(ptr: *const T) -> Self {
+        Self(ptr as usize)
+    }
+}
+
+impl<T> From<*mut T> for VirtualAddress {
+    fn from(ptr: *mut T) -> Self {
+        Self(ptr as usize)
     }
 }
 

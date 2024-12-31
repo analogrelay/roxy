@@ -206,4 +206,12 @@ pub trait Architecture: Send + Sync {
             ptr::write_bytes(address.as_mut_ptr() as *mut u8, value, count);
         }
     }
+
+    /// Copies `count` bytes from `src` to `dest`.
+    unsafe fn copy(&self, src: VirtualAddress, dest: VirtualAddress, count: usize) {
+        unsafe {
+            // SAFETY: The caller must ensure that the addresses are valid.
+            ptr::copy(src.as_mut_ptr::<u8>(), dest.as_mut_ptr(), count);
+        }
+    }
 }
